@@ -295,7 +295,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setBlocked(number: String, blocked: Boolean) {
         launchIo(if (blocked) "Engellenemedi" else "Engel kaldırılamadı") {
             withContext(Dispatchers.IO) {
-                if (blocked) Blocking.block(ctx, number.trim()) else Blocking.unblock(ctx, number)
+                if (blocked) {
+                    Blocking.block(ctx, number.trim())
+                    // Engellenen numaranın okunmamış mesajları ve bildirimi kalmasın.
+                    SmsStore.conversations(ctx)
+                        .filter { it.blocked && it.unread > 0 }
+                        .forEach { SmsStore.markRead(ctx, it.threadId, it.subId) }
+                } else {
+                    Blocking.unblock(ctx, number)
+                }
             }
             reload()
         }
