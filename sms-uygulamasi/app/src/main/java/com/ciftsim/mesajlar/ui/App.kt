@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,7 +47,7 @@ import com.ciftsim.mesajlar.MainViewModel
 import com.ciftsim.mesajlar.Permissions
 import com.ciftsim.mesajlar.Screen
 import com.ciftsim.mesajlar.SimInfo
-import com.ciftsim.mesajlar.Sims
+import com.ciftsim.mesajlar.SimPrefs
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -62,7 +64,9 @@ fun AppTheme(content: @Composable () -> Unit) {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         dark -> darkColorScheme(primary = Color(0xFF90CAF9), secondary = Color(0xFFA5D6A7))
-        else -> lightColorScheme(primary = Color(Sims.COLOR_SIM1), secondary = Color(Sims.COLOR_SIM2))
+        else -> lightColorScheme(
+            primary = Color(SimPrefs.palette[0]), secondary = Color(SimPrefs.palette[1]),
+        )
     }
     MaterialTheme(colorScheme = scheme, content = content)
 }
@@ -95,6 +99,12 @@ fun App(viewModel: MainViewModel) {
                     }
                     is Screen.NewMessage -> holder.SaveableStateProvider(current.toString()) {
                         NewMessageScreen(current, state, viewModel)
+                    }
+                    Screen.Settings -> holder.SaveableStateProvider("settings") {
+                        SettingsScreen(state, viewModel)
+                    }
+                    Screen.Blocked -> holder.SaveableStateProvider("blocked") {
+                        BlockedScreen(state, viewModel)
                     }
                 }
             }
@@ -131,7 +141,10 @@ fun SimBadge(sim: SimInfo, modifier: Modifier = Modifier) {
         fontSize = 10.sp,
         lineHeight = 12.sp,
         fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
         modifier = modifier
+            .widthIn(max = 96.dp)
             .background(sim.uiColor, RoundedCornerShape(6.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )

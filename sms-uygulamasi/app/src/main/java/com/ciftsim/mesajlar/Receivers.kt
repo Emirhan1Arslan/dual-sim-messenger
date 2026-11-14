@@ -1,6 +1,7 @@
 package com.ciftsim.mesajlar
 
 import android.app.Activity
+import android.app.RemoteInput
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -9,6 +10,7 @@ import android.os.IBinder
 import android.provider.Telephony
 import android.telephony.SmsManager
 import android.telephony.TelephonyManager
+import java.io.File
 
 private const val EXTRA_SUBSCRIPTION_INDEX = "android.telephony.extra.SUBSCRIPTION_INDEX"
 private const val EXTRA_SUBSCRIPTION_LEGACY = "subscription"
@@ -19,6 +21,19 @@ private fun subIdFrom(intent: Intent): Int {
     if (subId < 0) subId = intent.getIntExtra(EXTRA_SUBSCRIPTION_LEGACY, -1)
     if (subId < 0) subId = SmsManager.getDefaultSmsSubscriptionId()
     return subId
+}
+
+/** Veritabanı / dosya işi yapan alıcılar için: işi arka planda yürütür. */
+private fun BroadcastReceiver.inBackground(block: () -> Unit) {
+    val pending = goAsync()
+    Thread {
+        try {
+            block()
+        } catch (_: Exception) {
+        } finally {
+            pending.finish()
+        }
+    }.start()
 }
 
 /** SMS_DELIVER: gelen SMS'i Inbox'a yazar ve bildirim gösterir. */
@@ -34,21 +49,44 @@ class SmsReceiver : BroadcastReceiver() {
         // Çok parçalı mesajın parçalarını tek gövdede birleştir.
         val body = parts.joinToString("") { it.displayMessageBody ?: it.messageBody ?: "" }
         val subId = subIdFrom(intent)
-
         val ctx = context.applicationContext
-        val threadId = Telephony.Threads.getOrCreateThreadId(ctx, address)
-        val open = AppState.isOpen(threadId, subId)
-        SmsStore.insertInbox(ctx, threadId, address, body, first.timestampMillis, subId, read = open)
-        if (!open) Notifier.show(ctx, address, body, threadId, subId)
+
+        inBackground {
+            val threadId = Telephony.Threads.getOrCreateThreadId(ctx, address)
+            // Engellenen numaranın mesajı kaydedilir ama okunmuş sayılır ve bildirim çıkmaz;
+            // "Engellenenler" ekranından görülebilir.
+            val quiet = AppState.isOpen(threadId, subId) || Blocking.isBlocked(ctx, address)
+            SmsStore.insertInbox(
+                ctx, threadId, address, body, first.timestampMillis, subId, read = quiet,
+            )
+            if (!quiet) Notifier.show(ctx, address, body, threadId, subId)
+        }
     }
 }
 
-/** WAP_PUSH_DELIVER: MMS bu sürümde kapsam dışı; yalnızca varsayılan SMS rolü için var. */
+/** WAP_PUSH_DELIVER: gelen MMS bildirimi; içerik SmsManager ile indirilir. */
 class MmsReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) = Unit
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Telephony.Sms.Intents.WAP_PUSH_DELIVER_ACTION) return
+        val data = intent.getByteArrayExtra("data") ?: return
+        val subId = subIdFrom(intent)
+        val ctx = context.applicationContext
+        inBackground { MmsStore.startDownload(ctx, data, subId) }
+    }
 }
 
-/** Gönderim sonucu: Outbox'taki mesajı SENT ya da FAILED yapar. */
+/** MMS indirmesi bittiğinde çağrılır. */
+class MmsDownloadedReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val path = intent.getStringExtra(MmsStore.EXTRA_FILE) ?: return
+        val subId = intent.getIntExtra(MmsStore.EXTRA_SUB_ID, -1)
+        val result = resultCode
+        val ctx = context.applicationContext
+        inBackground { MmsStore.onDownloaded(ctx, File(path), subId, result) }
+    }
+}
+
+/** SMS gönderim sonucu: Outbox'taki mesajı SENT ya da FAILED yapar. */
 class SmsSentReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val uri = intent.data ?: return
@@ -64,6 +102,42 @@ class SmsSentReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_SENT = "com.ciftsim.mesajlar.SMS_SENT"
         const val EXTRA_LAST_PART = "last_part"
+    }
+}
+
+/** MMS gönderim sonucu. */
+class MmsSentReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val message = intent.data ?: return
+        intent.getStringExtra(MmsStore.EXTRA_FILE)?.let { File(it).delete() }
+        val box = if (resultCode == Activity.RESULT_OK) Telephony.Mms.MESSAGE_BOX_SENT
+        else Telephony.Mms.MESSAGE_BOX_FAILED
+        MmsStore.setBox(context.applicationContext, message, box)
+    }
+}
+
+/** Bildirimdeki "Yanıtla" ve "Okundu" eylemleri. */
+class NotificationActionReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val threadId = intent.getLongExtra(MainActivity.EXTRA_THREAD_ID, -1L)
+        val subId = intent.getIntExtra(MainActivity.EXTRA_SUB_ID, -1)
+        val address = intent.getStringExtra(MainActivity.EXTRA_ADDRESS).orEmpty()
+        val reply = RemoteInput.getResultsFromIntent(intent)
+            ?.getCharSequence(KEY_REPLY)?.toString()?.trim().orEmpty()
+        val ctx = context.applicationContext
+        inBackground {
+            if (intent.action == ACTION_REPLY && reply.isNotEmpty() && address.isNotEmpty()) {
+                SmsStore.send(ctx, address, reply, subId)
+            }
+            // Bildirimi de kapatır.
+            SmsStore.markRead(ctx, threadId, subId)
+        }
+    }
+
+    companion object {
+        const val ACTION_REPLY = "com.ciftsim.mesajlar.REPLY"
+        const val ACTION_MARK_READ = "com.ciftsim.mesajlar.MARK_READ"
+        const val KEY_REPLY = "yanit"
     }
 }
 

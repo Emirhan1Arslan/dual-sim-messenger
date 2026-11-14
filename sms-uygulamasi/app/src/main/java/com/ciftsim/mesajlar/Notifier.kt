@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.RemoteInput
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -11,35 +12,69 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.drawable.Icon
 import android.net.Uri
 
-/** Gelen mesaj bildirimleri: başlık "Kişi · SIM 2", SIM renginde rozet. */
+/** Gelen mesaj bildirimleri: başlık "Kişi · SIM adı", SIM renginde rozet, yanıtla / okundu. */
 object Notifier {
     private const val CHANNEL_ID = "mesajlar"
+    private const val FAILED_ID = -4100
 
     private fun idFor(threadId: Long, subId: Int): Int = (threadId * 31 + subId).toInt()
 
-    fun show(ctx: Context, address: String, body: String, threadId: Long, subId: Int) {
-        val manager = ctx.getSystemService(NotificationManager::class.java) ?: return
+    private fun manager(ctx: Context): NotificationManager? {
+        val manager = ctx.getSystemService(NotificationManager::class.java) ?: return null
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "Mesajlar", NotificationManager.IMPORTANCE_HIGH)
         )
+        return manager
+    }
 
-        val slot = Sims.slotOf(ctx, subId)
+    fun show(ctx: Context, address: String, body: String, threadId: Long, subId: Int) {
+        val manager = manager(ctx) ?: return
+        val sim = Sims.find(ctx, subId)
         val who = SmsStore.contactName(ctx, address) ?: address
-        val title = if (slot >= 0) "$who · SIM ${slot + 1}" else who
+        val title = if (sim != null) "$who · ${sim.label}" else who
+        val id = idFor(threadId, subId)
+        // Her konuşmanın PendingIntent'leri birbirinden ayrılsın.
+        val data = Uri.parse("ciftsim://konusma/$threadId/$subId")
 
         val open = Intent(ctx, MainActivity::class.java)
             .setAction(MainActivity.ACTION_OPEN_CONVERSATION)
-            .setData(Uri.parse("ciftsim://konusma/$threadId/$subId"))
+            .setData(data)
             .putExtra(MainActivity.EXTRA_THREAD_ID, threadId)
             .putExtra(MainActivity.EXTRA_SUB_ID, subId)
             .putExtra(MainActivity.EXTRA_ADDRESS, address)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val contentIntent = PendingIntent.getActivity(
-            ctx, 0, open,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ctx, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+
+        fun action(name: String) = Intent(ctx, NotificationActionReceiver::class.java)
+            .setAction(name)
+            .setData(data)
+            .putExtra(MainActivity.EXTRA_THREAD_ID, threadId)
+            .putExtra(MainActivity.EXTRA_SUB_ID, subId)
+            .putExtra(MainActivity.EXTRA_ADDRESS, address)
+
+        val icon = Icon.createWithResource(ctx, R.drawable.ic_stat_message)
+        // Yanıt metni sistem tarafından intent'e eklendiği için MUTABLE olmalı.
+        val reply = Notification.Action.Builder(
+            icon, "Yanıtla",
+            PendingIntent.getBroadcast(
+                ctx, 0, action(NotificationActionReceiver.ACTION_REPLY),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+            ),
+        ).addRemoteInput(
+            RemoteInput.Builder(NotificationActionReceiver.KEY_REPLY).setLabel("Yanıt yazın").build()
+        ).build()
+        val markRead = Notification.Action.Builder(
+            icon, "Okundu",
+            PendingIntent.getBroadcast(
+                ctx, 0, action(NotificationActionReceiver.ACTION_MARK_READ),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ),
+        ).build()
 
         val builder = Notification.Builder(ctx, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_message)
@@ -51,11 +86,23 @@ object Notifier {
             .setShowWhen(true)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
-        if (slot >= 0) {
-            val color = Sims.colorForSlot(slot)
-            builder.setColor(color).setLargeIcon(simBadge(slot + 1, color))
+            .addAction(reply)
+            .addAction(markRead)
+        if (sim != null) {
+            builder.setColor(sim.color).setLargeIcon(simBadge(sim.slot + 1, sim.color))
         }
-        manager.notify(idFor(threadId, subId), builder.build())
+        manager.notify(id, builder.build())
+    }
+
+    fun showMmsFailed(ctx: Context, subId: Int) {
+        val manager = manager(ctx) ?: return
+        val sim = Sims.find(ctx, subId)
+        val builder = Notification.Builder(ctx, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_message)
+            .setContentTitle(if (sim != null) "MMS indirilemedi · ${sim.label}" else "MMS indirilemedi")
+            .setContentText("Bu SIM'in mobil verisi açık olmalı. Gönderenden yeniden yollamasını isteyin.")
+            .setAutoCancel(true)
+        manager.notify(FAILED_ID, builder.build())
     }
 
     fun cancel(ctx: Context, threadId: Long, subId: Int) {

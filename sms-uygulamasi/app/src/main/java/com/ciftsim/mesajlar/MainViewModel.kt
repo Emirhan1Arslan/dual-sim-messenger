@@ -3,6 +3,7 @@ package com.ciftsim.mesajlar
 import android.app.Application
 import android.app.role.RoleManager
 import android.database.ContentObserver
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.Telephony
@@ -10,7 +11,9 @@ import android.telephony.SmsManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -30,6 +33,11 @@ sealed interface Screen {
         /** Ana ekranda seçili sekmenin SIM'i ("Tümü" sekmesinde null). */
         val preferredSubId: Int? = null,
     ) : Screen
+
+    data object Settings : Screen
+
+    /** Engellenen numaraların konuşmaları. */
+    data object Blocked : Screen
 }
 
 data class UiState(
@@ -39,14 +47,27 @@ data class UiState(
     val permissionsOk: Boolean = false,
     val sims: List<SimInfo> = emptyList(),
     val defaultSubId: Int = -1,
-    val conversations: List<Conversation> = emptyList(),
+    /** Engellenenler dahil bütün konuşmalar. */
+    val allConversations: List<Conversation> = emptyList(),
     val loaded: Boolean = false,
     /** Açık konuşmanın mesajları; henüz yüklenmediyse null. */
     val messages: List<Message>? = null,
+    val contacts: List<Contact> = emptyList(),
+    val blockedNumbers: List<String> = emptyList(),
+    val blockingAvailable: Boolean = true,
+    /** Mesaj metni araması sonuçları. */
+    val searchHits: List<Conversation> = emptyList(),
 ) {
     val ready: Boolean get() = isDefault && permissionsOk
 
+    /** Ana listede görünen konuşmalar (engellenenler hariç). */
+    val conversations: List<Conversation> get() = allConversations.filterNot { it.blocked }
+    val blockedConversations: List<Conversation> get() = allConversations.filter { it.blocked }
+
     fun sim(subId: Int): SimInfo? = sims.firstOrNull { it.subId == subId }
+
+    fun conversation(threadId: Long, subId: Int): Conversation? =
+        allConversations.firstOrNull { it.threadId == threadId && it.subId == subId }
 
     fun unread(subId: Int?): Int =
         conversations.sumOf { if (subId == null || it.subId == subId) it.unread else 0 }
@@ -72,6 +93,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Art arda gelen yenileme isteklerini tek yüklemede toplar. */
     private val reloads = Channel<Unit>(Channel.CONFLATED)
     private var observer: ContentObserver? = null
+    private var searchJob: Job? = null
+
+    private val ctx get() = getApplication<Application>()
 
     init {
         viewModelScope.launch {
@@ -81,9 +105,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Durum ----
 
-    /** Rol ve izinleri yeniden okur; kurulum tamamsa content://sms'i dinler ve yükler. */
+    /** Rol ve izinleri yeniden okur; kurulum tamamsa mesaj veritabanını dinler ve yükler. */
     fun refreshStatus() {
-        val ctx = getApplication<Application>()
         val isDefault =
             ctx.getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_SMS) == true
         val permissionsOk = Permissions.hasRequired(ctx)
@@ -106,8 +129,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             override fun onChange(selfChange: Boolean) = reload()
         }
         try {
-            getApplication<Application>().contentResolver
-                .registerContentObserver(Telephony.Sms.CONTENT_URI, true, created)
+            val resolver = ctx.contentResolver
+            // SMS, MMS ve ikisinin ortak konuşma tablosu.
+            resolver.registerContentObserver(Telephony.Sms.CONTENT_URI, true, created)
+            resolver.registerContentObserver(Telephony.Mms.CONTENT_URI, true, created)
+            resolver.registerContentObserver(Telephony.MmsSms.CONTENT_URI, true, created)
             observer = created
         } catch (_: SecurityException) {
         }
@@ -115,13 +141,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun load() {
         if (!_state.value.ready) return
-        val ctx = getApplication<Application>()
         val current = _screen.value
         try {
             withContext(Dispatchers.IO) {
                 val sims = Sims.active(ctx)
                 val defaultSubId = SmsManager.getDefaultSmsSubscriptionId()
                 val conversations = SmsStore.conversations(ctx)
+                val blockedNumbers = Blocking.list(ctx)
+                val blockingAvailable = Blocking.available(ctx)
                 var messages: List<Message>? = null
                 if (current is Screen.Conversation) {
                     messages = SmsStore.messages(ctx, current.threadId, current.subId)
@@ -136,7 +163,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     it.copy(
                         sims = sims,
                         defaultSubId = defaultSubId,
-                        conversations = conversations,
+                        allConversations = conversations,
+                        blockedNumbers = blockedNumbers,
+                        blockingAvailable = blockingAvailable,
                         loaded = true,
                         messages = if (_screen.value == current) messages else it.messages,
                     )
@@ -160,6 +189,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun openNewMessage(address: String = "", body: String = "", preferredSubId: Int? = null) {
         clearActive()
         _screen.value = Screen.NewMessage(address, body, preferredSubId)
+        viewModelScope.launch {
+            val contacts = withContext(Dispatchers.IO) { SmsStore.contacts(ctx) }
+            _state.update { it.copy(contacts = contacts) }
+        }
+    }
+
+    fun openSettings() {
+        clearActive()
+        _screen.value = Screen.Settings
+    }
+
+    fun openBlocked() {
+        clearActive()
+        _screen.value = Screen.Blocked
     }
 
     fun back() {
@@ -173,40 +216,105 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(messages = null) }
     }
 
-    // ---- İşlemler ----
+    // ---- Mesaj işlemleri ----
 
-    /** Gönderir ve mesajın yazıldığı (thread, SIM) konuşmasını açar. */
-    fun send(address: String, body: String, subId: Int) {
-        val ctx = getApplication<Application>()
+    private fun launchIo(errorPrefix: String, block: suspend () -> Unit) {
         viewModelScope.launch {
             try {
-                val (threadId, usedSubId) = withContext(Dispatchers.IO) {
-                    SmsStore.send(ctx, address, body, subId)
-                }
-                val current = _screen.value
-                val same = current is Screen.Conversation &&
-                    current.threadId == threadId && current.subId == usedSubId
-                if (same) reload() else openConversation(threadId, usedSubId, address)
+                block()
             } catch (e: Exception) {
-                _errors.tryEmit("Gönderilemedi: ${e.message ?: "bilinmeyen hata"}")
+                _errors.tryEmit("$errorPrefix: ${e.message ?: "bilinmeyen hata"}")
             }
+        }
+    }
+
+    /**
+     * Gönderir ve mesajın yazıldığı (thread, SIM) konuşmasını açar.
+     * [image] verilirse mesaj MMS olarak gider.
+     */
+    fun send(address: String, body: String, subId: Int, image: Uri? = null) {
+        launchIo("Gönderilemedi") {
+            val (threadId, usedSubId) = withContext(Dispatchers.IO) {
+                if (image != null) MmsStore.send(ctx, address, body, image, subId)
+                else SmsStore.send(ctx, address, body, subId)
+            }
+            val current = _screen.value
+            val same = current is Screen.Conversation &&
+                current.threadId == threadId && current.subId == usedSubId
+            if (same) reload() else openConversation(threadId, usedSubId, address)
+        }
+    }
+
+    /** Gönderilemeyen SMS'i silip aynı SIM'den yeniden gönderir. */
+    fun retry(screen: Screen.Conversation, message: Message) {
+        if (message.mms) return
+        launchIo("Gönderilemedi") {
+            withContext(Dispatchers.IO) {
+                SmsStore.deleteMessage(ctx, message)
+                SmsStore.send(ctx, screen.address, message.body, screen.subId)
+            }
+            reload()
+        }
+    }
+
+    fun deleteMessage(message: Message) {
+        launchIo("Silinemedi") {
+            withContext(Dispatchers.IO) { SmsStore.deleteMessage(ctx, message) }
+            reload()
         }
     }
 
     fun deleteConversation(threadId: Long, subId: Int) {
-        val ctx = getApplication<Application>()
-        viewModelScope.launch {
-            try {
-                withContext(Dispatchers.IO) { SmsStore.deleteConversation(ctx, threadId, subId) }
-                back()
-            } catch (e: Exception) {
-                _errors.tryEmit("Silinemedi: ${e.message ?: "bilinmeyen hata"}")
-            }
+        launchIo("Silinemedi") {
+            withContext(Dispatchers.IO) { SmsStore.deleteConversation(ctx, threadId, subId) }
+            back()
         }
     }
 
+    /** Mesaj metinlerinde arar; yazarken her tuşta sorgu atmamak için kısa bir bekleme var. */
+    fun search(query: String) {
+        searchJob?.cancel()
+        val text = query.trim()
+        if (text.length < 2) {
+            _state.update { it.copy(searchHits = emptyList()) }
+            return
+        }
+        searchJob = viewModelScope.launch {
+            delay(250)
+            val hits = try {
+                withContext(Dispatchers.IO) { SmsStore.search(ctx, text) }
+            } catch (_: Exception) {
+                emptyList()
+            }
+            _state.update { it.copy(searchHits = hits) }
+        }
+    }
+
+    // ---- Engelleme ----
+
+    fun setBlocked(number: String, blocked: Boolean) {
+        launchIo(if (blocked) "Engellenemedi" else "Engel kaldırılamadı") {
+            withContext(Dispatchers.IO) {
+                if (blocked) Blocking.block(ctx, number.trim()) else Blocking.unblock(ctx, number)
+            }
+            reload()
+        }
+    }
+
+    // ---- SIM ayarları ----
+
+    fun setSimName(subId: Int, name: String) {
+        SimPrefs.setName(ctx, subId, name)
+        reload()
+    }
+
+    fun setSimColor(subId: Int, color: Int) {
+        SimPrefs.setColor(ctx, subId, color)
+        reload()
+    }
+
     override fun onCleared() {
-        observer?.let { getApplication<Application>().contentResolver.unregisterContentObserver(it) }
+        observer?.let { ctx.contentResolver.unregisterContentObserver(it) }
         clearActive()
     }
 }
