@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- MMS PDU dosyaları: sistem (telefon servisi) bu dosyalara yazar / bunlardan okur. -->
+    <cache-path name="mms" path="mms/" />
+</paths>

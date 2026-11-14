@@ -43,7 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ciftsim.mesajlar.Permissions
-import com.ciftsim.mesajlar.Sims
+import com.ciftsim.mesajlar.SimPrefs
 import com.ciftsim.mesajlar.UiState
 
 /** Kurulum: önce varsayılan SMS uygulaması rolü, sonra izinler. */
@@ -151,7 +151,7 @@ private fun StepCard(
                     Modifier
                         .size(28.dp)
                         .background(
-                            if (done) Color(Sims.COLOR_SIM2)
+                            if (done) Color(SimPrefs.palette[1])
                             else MaterialTheme.colorScheme.primaryContainer,
                             CircleShape,
                         ),
