@@ -4,7 +4,25 @@
 ayrılır (SIM 1 mavi, SIM 2 yeşil), cevaplar konuşmanın geldiği SIM'den gider.
 
 Kotlin + Jetpack Compose (Material 3) ile yazıldı; tek modül, ViewModel + StateFlow.
-Android 10 ve üzeri gerekir. MMS bu sürümde yoktur.
+Android 10 ve üzeri gerekir.
+
+## Özellikler
+
+- **SIM'e göre ayrım:** "Tümü" ve her SIM için ayrı sekme, okunmamış sayılarıyla. SIM rozeti
+  yalnızca "Tümü" sekmesinde ve aramada görünür.
+- **SIM adı ve rengi:** Menü → Ayarlar'dan her SIM'e ad verilir ve renk seçilir.
+- **MMS:** Konuşma ekranındaki **+** ile fotoğraf gönderilir; gelen fotoğraflar konuşmada
+  görünür. MMS için ilgili SIM'in mobil verisi açık olmalıdır.
+- **Yeni mesaj:** "Kime" alanına ad ya da numara yazdıkça rehber listesi daralır.
+- **Arama:** Kişi adı, numara ve mesaj metninde arama.
+- **Telefon etme:** Konuşma ekranındaki telefon simgesi numarayı telefon uygulamasında açar.
+- **Engelleme:** Konuşma menüsünden ya da Ayarlar'dan numara engellenir. Liste telefonun
+  ortak engelli listesidir; engellenen numaranın mesaj ve aramaları telefona ulaşmaz.
+- **Mesaj işlemleri:** Mesaja uzun basınca kopyala, sil, gönderilemeyeni yeniden gönder.
+- **Bildirimler:** Başlıkta kişi ve SIM adı; bildirimden yanıtlama ve okundu işaretleme.
+
+Bu sürümde olmayanlar: grup MMS'i, video/ses gönderme, kelimeye göre spam filtresi,
+teslim raporları.
 
 ## APK'yı indirme
 
