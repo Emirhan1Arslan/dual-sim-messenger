@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Çift SIM Mesajlar</string>
+    <color name="ic_launcher_background">#1E88E5</color>
+
+    <style name="Theme.CiftSim" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
