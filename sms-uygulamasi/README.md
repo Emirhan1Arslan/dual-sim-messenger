@@ -1,0 +1,41 @@
+# Çift SIM Mesajlar
+
+Çift SIM'li Android telefonlar için varsayılan SMS uygulaması. Konuşmalar SIM'e göre
+ayrılır (SIM 1 mavi, SIM 2 yeşil), cevaplar konuşmanın geldiği SIM'den gider.
+
+Arayüz Flutter (Material 3) ile, SMS/SIM katmanı eklenti kullanmadan Kotlin ile yazıldı
+(`android/app/src/main/kotlin/`). Android 10 ve üzeri gerekir. MMS bu sürümde yoktur.
+
+## APK'yı indirme
+
+1. GitHub'da deponun **Actions** sekmesini açın.
+2. **SMS APK** workflow'unun son başarılı (yeşil) çalışmasına girin.
+3. Sayfanın altındaki **Artifacts** bölümünden `cift-sim-mesajlar-debug` dosyasını indirin
+   ve zip'i açın; içinden `app-debug.apk` çıkar.
+
+Kendiniz derlemek isterseniz (Flutter 3.47+ ve Android SDK gerekir):
+
+```
+cd sms-uygulamasi
+flutter build apk --debug
+```
+
+APK `build/app/outputs/flutter-apk/app-debug.apk` yoluna yazılır.
+
+## Kurulum
+
+1. `app-debug.apk` dosyasını telefona kopyalayıp açın. Android "bilinmeyen kaynaklardan
+   yükleme" izni isterse dosyayı açtığınız uygulama (ör. Dosyalar) için izin verin.
+   Bilgisayardan kurmak için: `adb install -r app-debug.apk`
+2. Uygulamayı açın.
+
+## Varsayılan SMS uygulaması yapma
+
+1. Açılış ekranında **Varsayılan SMS uygulaması yap** butonuna dokunun, açılan pencerede
+   **Çift SIM Mesajlar**'ı seçip onaylayın.
+2. **İzinleri ver** butonuna dokunup SMS, telefon, rehber ve bildirim izinlerini verin.
+   (Bazı cihazlarda izinler rolle birlikte kendiliğinden verilir ve bu adım atlanır.)
+
+Pencere açılmazsa: **Ayarlar → Uygulamalar → Varsayılan uygulamalar → SMS uygulaması**
+yolundan Çift SIM Mesajlar'ı seçin. Eski SMS uygulamanıza dönmek için de aynı ekranı
+kullanın; mesajlarınız telefonun ortak SMS veritabanında durduğu için kaybolmaz.

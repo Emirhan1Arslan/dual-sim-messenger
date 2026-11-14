@@ -1,0 +1,46 @@
+name: SMS APK
+
+on:
+  push:
+    paths:
+      - "sms-uygulamasi/**"
+      - ".github/workflows/sms-apk.yml"
+  pull_request:
+    paths:
+      - "sms-uygulamasi/**"
+      - ".github/workflows/sms-apk.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sms-uygulamasi
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.47.5"
+          cache: true
+
+      - run: flutter pub get
+
+      - run: flutter analyze
+
+      # Flutter projesinde Gradle doğrudan değil Flutter aracı üzerinden çalıştırılır;
+      # bu komut arka planda ./gradlew assembleDebug görevini yürütür.
+      - run: flutter build apk --debug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cift-sim-mesajlar-debug
+          path: sms-uygulamasi/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
