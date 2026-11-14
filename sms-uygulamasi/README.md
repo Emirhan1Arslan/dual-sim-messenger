@@ -3,8 +3,8 @@
 Çift SIM'li Android telefonlar için varsayılan SMS uygulaması. Konuşmalar SIM'e göre
 ayrılır (SIM 1 mavi, SIM 2 yeşil), cevaplar konuşmanın geldiği SIM'den gider.
 
-Arayüz Flutter (Material 3) ile, SMS/SIM katmanı eklenti kullanmadan Kotlin ile yazıldı
-(`android/app/src/main/kotlin/`). Android 10 ve üzeri gerekir. MMS bu sürümde yoktur.
+Kotlin + Jetpack Compose (Material 3) ile yazıldı; tek modül, ViewModel + StateFlow.
+Android 10 ve üzeri gerekir. MMS bu sürümde yoktur.
 
 ## APK'yı indirme
 
@@ -13,14 +13,14 @@ Arayüz Flutter (Material 3) ile, SMS/SIM katmanı eklenti kullanmadan Kotlin il
 3. Sayfanın altındaki **Artifacts** bölümünden `cift-sim-mesajlar-debug` dosyasını indirin
    ve zip'i açın; içinden `app-debug.apk` çıkar.
 
-Kendiniz derlemek isterseniz (Flutter 3.47+ ve Android SDK gerekir):
+Kendiniz derlemek isterseniz (JDK 17+ ve Android SDK gerekir):
 
 ```
 cd sms-uygulamasi
-flutter build apk --debug
+./gradlew assembleDebug
 ```
 
-APK `build/app/outputs/flutter-apk/app-debug.apk` yoluna yazılır.
+APK `app/build/outputs/apk/debug/app-debug.apk` yoluna yazılır.
 
 ## Kurulum
 
